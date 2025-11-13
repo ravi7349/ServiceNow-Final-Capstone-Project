@@ -114,7 +114,7 @@ app.get("/api/incidents", async (req, res) => {
   const sid = req.cookies.sid;
   const session = tokenStore.get(sid);
 
-  if (!session.access_token) return res.status(401).send("Not authenticated");
+  if (!session || !session.access_token) return res.status(401).send("Not authenticated");
 
   try {
     const r = await axios.get(
@@ -245,6 +245,53 @@ app.delete("/api/incidents/:id", async (req, res) => {
         tokenStore.set(sid, { ...session, ...refresh.data });
 
         const retry = await axios.delete(`${SN_INTANCE}/api/now/table/incident/${id}`, {
+          headers: { Authorization: `Bearer ${refresh.data.access_token}` },
+        });
+
+        res.json(retry.data);
+        return;
+      } catch (refreshErr) {
+        return res.status(401).send("Session Expired");
+      }
+    }
+
+    console.error(e?.response?.data || e.message || e);
+    res.status(e.response?.status || 500).send("Upstream error");
+  }
+});
+
+// Create a new incident in ServiceNow
+app.post("/api/incidents", async (req, res) => {
+  const sid = req.cookies.sid;
+  const session = tokenStore.get(sid);
+
+  if (!session || !session.access_token) return res.status(401).send("Not authenticated");
+
+  const payload = req.body || {};
+
+  try {
+    const r = await axios.post(`${SN_INTANCE}/api/now/table/incident`, payload, {
+      headers: { Authorization: `Bearer ${session.access_token}` },
+    });
+
+    tokenStore.set(sid, { ...session, last_update: Date.now() });
+    res.json(r.data);
+  } catch (e) {
+    if (e.response && e.response.status === 401 && session.refresh_token) {
+      const data = {
+        grant_type: "refresh_token",
+        refresh_token: session.refresh_token,
+        client_id: CLIENT_ID,
+      };
+
+      try {
+        const refresh = await axios.post(tokenEndpoint, stringify(data), {
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        });
+
+        tokenStore.set(sid, { ...session, ...refresh.data });
+
+        const retry = await axios.post(`${SN_INTANCE}/api/now/table/incident`, payload, {
           headers: { Authorization: `Bearer ${refresh.data.access_token}` },
         });
 

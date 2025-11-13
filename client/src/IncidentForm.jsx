@@ -9,7 +9,7 @@ import {
   Typography,
 } from "@mui/material";
 
-export default function IncidentForm({ incident, onCancel, onSave }) {
+export default function IncidentForm({ incident, onCancel, onSave, onCreate }) {
   const [form, setForm] = useState({
     sys_id: "",
     number: "",
@@ -39,19 +39,26 @@ export default function IncidentForm({ incident, onCancel, onSave }) {
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (!form.sys_id) return;
-    // send only allowed fields
     const payload = {
       short_description: form.short_description,
       state: form.state,
       priority: form.priority,
     };
-    onSave && onSave(form.sys_id, payload);
+
+    if (form.sys_id) {
+      onSave && onSave(form.sys_id, payload);
+      return;
+    }
+
+    // create mode
+    if (onCreate) {
+      onCreate(payload);
+    }
   };
 
   return (
     <Paper sx={{ p: 2, mb: 3 }} elevation={2}>
-      <Typography variant="h6">Edit Incident</Typography>
+      <Typography variant="h6">{form.sys_id ? 'Edit Incident' : 'Create Incident'}</Typography>
       <Box component="form" onSubmit={handleSubmit} sx={{ mt: 1 }}>
         <Stack direction={{ xs: "column", sm: "row" }} spacing={2} alignItems="center">
           <TextField
