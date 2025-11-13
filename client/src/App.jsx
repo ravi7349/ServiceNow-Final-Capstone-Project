@@ -27,7 +27,7 @@ function App() {
         <AppBar>
           <Toolbar sx={{ justifyContent: "space-between" }}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-              <Typography>Company Name</Typography>
+              <Typography>Revature</Typography>
               {/* Theme toggle */}
               <IconButton
                 sx={{ ml: 1 }}

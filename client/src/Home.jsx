@@ -64,7 +64,8 @@ export default function Home() {
       setNotif({ open: true, message: "Incident created successfully", severity: "success" });
     } catch (e) {
       console.error('Create failed', e);
-      alert('Create failed: ' + (e.response?.data || e.message));
+      const errMsg = e.response?.data?.error || e.response?.data || e.message;
+      setNotif({ open: true, message: `Create failed: ${String(errMsg)}`, severity: 'error' });
     }
   };
 
@@ -85,7 +86,8 @@ export default function Home() {
       setNotif({ open: true, message: "Incident updated successfully", severity: "success" });
     } catch (e) {
       console.error("Update failed", e);
-      alert("Update failed: " + (e.response?.data || e.message));
+      const errMsg = e.response?.data?.error || e.response?.data || e.message;
+      setNotif({ open: true, message: `Update failed: ${String(errMsg)}`, severity: 'error' });
     }
   };
 
@@ -101,7 +103,8 @@ export default function Home() {
       setNotif({ open: true, message: "Incident deleted", severity: "success" });
     } catch (e) {
       console.error('Delete failed', e);
-      alert('Delete failed: ' + (e.response?.data || e.message));
+      const errMsg = e.response?.data?.error || e.response?.data || e.message;
+      setNotif({ open: true, message: `Delete failed: ${String(errMsg)}`, severity: 'error' });
     }
   };
 
@@ -122,6 +125,14 @@ export default function Home() {
               incident={null}
               onCancel={() => setCreating(false)}
               onCreate={handleCreate}
+            />
+          )}
+
+          {editing && (
+            <IncidentForm
+              incident={editing}
+              onCancel={handleCancel}
+              onSave={handleSave}
             />
           )}
 
