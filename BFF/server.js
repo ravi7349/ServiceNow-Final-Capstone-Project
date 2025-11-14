@@ -114,7 +114,7 @@ app.get("/api/incidents", async (req, res) => {
   const sid = req.cookies.sid;
   const session = tokenStore.get(sid);
 
-  if (!session || !session.access_token) return res.status(401).send("Not authenticated");
+  if (!session.access_token) return res.status(401).send("Not authenticated");
 
   try {
     const r = await axios.get(
@@ -154,156 +154,227 @@ app.get("/api/incidents", async (req, res) => {
   }
 });
 
-// Update an incident in ServiceNow
-app.put("/api/incidents/:id", async (req, res) => {
+// Create incident endpoint
+app.post("/api/incidents", async (req, res) => {
   const sid = req.cookies.sid;
   const session = tokenStore.get(sid);
 
-  if (!session || !session.access_token) return res.status(401).send("Not authenticated");
-
-  const { id } = req.params;
-  const payload = req.body || {};
+  if (!session?.access_token) return res.status(401).send("Not authenticated");
 
   try {
-    const r = await axios.patch(
-      `${SN_INTANCE}/api/now/table/incident/${id}`,
-      payload,
+    const { short_description, description, urgency, impact, priority } = req.body;
+
+    // Validate required fields
+    if (!short_description) {
+      return res.status(400).json({ message: "short_description is required" });
+    }
+
+    // Prepare incident payload for ServiceNow
+    const incidentPayload = {
+      short_description: short_description,
+      description: description || "",
+      urgency: urgency || "medium",
+      impact: impact || "medium",
+      priority: priority || "3",
+    };
+
+    // Create incident in ServiceNow
+    const response = await axios.post(
+      `${SN_INTANCE}/api/now/table/incident`,
+      incidentPayload,
       {
         headers: { Authorization: `Bearer ${session.access_token}` },
       }
     );
 
-    // update local store copy if present
-    tokenStore.set(sid, { ...session, last_update: Date.now() });
-
-    res.json(r.data);
+    return res.json({
+      sys_id: response.data.result.sys_id,
+      number: response.data.result.number,
+      message: "Incident created successfully",
+    });
   } catch (e) {
-    // try to refresh token on 401
-    if (e.response && e.response.status === 401 && session.refresh_token) {
-      const data = {
-        grant_type: "refresh_token",
-        refresh_token: session.refresh_token,
-        client_id: CLIENT_ID,
-      };
-
+    if (e.response?.status === 401 && session.refresh_token) {
       try {
+        const data = {
+          grant_type: "refresh_token",
+          refresh_token: session.refresh_token,
+          client_id: CLIENT_ID,
+        };
+
         const refresh = await axios.post(tokenEndpoint, stringify(data), {
           headers: { "Content-Type": "application/x-www-form-urlencoded" },
         });
 
         tokenStore.set(sid, { ...session, ...refresh.data });
 
-        const retry = await axios.patch(
-          `${SN_INTANCE}/api/now/table/incident/${id}`,
-          payload,
+        // Retry creating incident with new token
+        const incidentPayload = {
+          short_description: req.body.short_description,
+          description: req.body.description || "",
+          urgency: req.body.urgency || "medium",
+          impact: req.body.impact || "medium",
+          priority: req.body.priority || "3",
+        };
+
+        const response = await axios.post(
+          `${SN_INTANCE}/api/now/table/incident`,
+          incidentPayload,
           {
-            headers: { Authorization: `Bearer ${refresh.data.access_token}` },
+            headers: { Authorization: `Bearer ${session.access_token}` },
           }
         );
 
-        res.json(retry.data);
-        return;
-      } catch (refreshErr) {
-        return res.status(401).send("Session Expired");
+        return res.json({
+          sys_id: response.data.result.sys_id,
+          number: response.data.result.number,
+          message: "Incident created successfully",
+        });
+      } catch (refreshError) {
+        return res.status(401).json({ message: "Session Expired" });
       }
     }
 
-    console.error(e?.response?.data || e.message || e);
-    res.status(e.response?.status || 500).send("Upstream error");
+    console.error("Error creating incident:", e.message);
+    return res.status(e.response?.status || 500).json({
+      message: e.response?.data?.error?.message || "Failed to create incident",
+    });
   }
 });
 
-// Delete an incident in ServiceNow
-app.delete("/api/incidents/:id", async (req, res) => {
+// Update incident endpoint
+app.patch("/api/incidents/:sys_id", async (req, res) => {
   const sid = req.cookies.sid;
   const session = tokenStore.get(sid);
+  const { sys_id } = req.params;
 
-  if (!session || !session.access_token) return res.status(401).send("Not authenticated");
-
-  const { id } = req.params;
+  if (!session?.access_token) return res.status(401).send("Not authenticated");
 
   try {
-    const r = await axios.delete(`${SN_INTANCE}/api/now/table/incident/${id}`, {
-      headers: { Authorization: `Bearer ${session.access_token}` },
+    const { short_description, description, urgency, impact, priority } = req.body;
+
+    // Prepare incident payload for ServiceNow
+    const incidentPayload = {
+      short_description: short_description || "",
+      description: description || "",
+      urgency: urgency || "medium",
+      impact: impact || "medium",
+      priority: priority || "3",
+    };
+
+    // Update incident in ServiceNow
+    const response = await axios.patch(
+      `${SN_INTANCE}/api/now/table/incident/${sys_id}`,
+      incidentPayload,
+      {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      }
+    );
+
+    return res.json({
+      sys_id: response.data.result.sys_id,
+      number: response.data.result.number,
+      message: "Incident updated successfully",
     });
-
-    tokenStore.set(sid, { ...session, last_update: Date.now() });
-    res.json(r.data);
   } catch (e) {
-    if (e.response && e.response.status === 401 && session.refresh_token) {
-      const data = {
-        grant_type: "refresh_token",
-        refresh_token: session.refresh_token,
-        client_id: CLIENT_ID,
-      };
-
+    if (e.response?.status === 401 && session.refresh_token) {
       try {
+        const data = {
+          grant_type: "refresh_token",
+          refresh_token: session.refresh_token,
+          client_id: CLIENT_ID,
+        };
+
         const refresh = await axios.post(tokenEndpoint, stringify(data), {
           headers: { "Content-Type": "application/x-www-form-urlencoded" },
         });
 
         tokenStore.set(sid, { ...session, ...refresh.data });
 
-        const retry = await axios.delete(`${SN_INTANCE}/api/now/table/incident/${id}`, {
-          headers: { Authorization: `Bearer ${refresh.data.access_token}` },
-        });
+        // Retry updating incident with new token
+        const incidentPayload = {
+          short_description: req.body.short_description || "",
+          description: req.body.description || "",
+          urgency: req.body.urgency || "medium",
+          impact: req.body.impact || "medium",
+          priority: req.body.priority || "3",
+        };
 
-        res.json(retry.data);
-        return;
-      } catch (refreshErr) {
-        return res.status(401).send("Session Expired");
+        const response = await axios.patch(
+          `${SN_INTANCE}/api/now/table/incident/${sys_id}`,
+          incidentPayload,
+          {
+            headers: { Authorization: `Bearer ${session.access_token}` },
+          }
+        );
+
+        return res.json({
+          sys_id: response.data.result.sys_id,
+          number: response.data.result.number,
+          message: "Incident updated successfully",
+        });
+      } catch (refreshError) {
+        return res.status(401).json({ message: "Session Expired" });
       }
     }
 
-    console.error(e?.response?.data || e.message || e);
-    res.status(e.response?.status || 500).send("Upstream error");
+    console.error("Error updating incident:", e.message);
+    return res.status(e.response?.status || 500).json({
+      message: e.response?.data?.error?.message || "Failed to update incident",
+    });
   }
 });
 
-// Create a new incident in ServiceNow
-app.post("/api/incidents", async (req, res) => {
+// Delete incident endpoint
+app.delete("/api/incidents/:sys_id", async (req, res) => {
   const sid = req.cookies.sid;
   const session = tokenStore.get(sid);
+  const { sys_id } = req.params;
 
-  if (!session || !session.access_token) return res.status(401).send("Not authenticated");
-
-  const payload = req.body || {};
+  if (!session?.access_token) return res.status(401).send("Not authenticated");
 
   try {
-    const r = await axios.post(`${SN_INTANCE}/api/now/table/incident`, payload, {
-      headers: { Authorization: `Bearer ${session.access_token}` },
-    });
+    // Delete incident in ServiceNow
+    await axios.delete(
+      `${SN_INTANCE}/api/now/table/incident/${sys_id}`,
+      {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      }
+    );
 
-    tokenStore.set(sid, { ...session, last_update: Date.now() });
-    res.json(r.data);
+    return res.json({ message: "Incident deleted successfully" });
   } catch (e) {
-    if (e.response && e.response.status === 401 && session.refresh_token) {
-      const data = {
-        grant_type: "refresh_token",
-        refresh_token: session.refresh_token,
-        client_id: CLIENT_ID,
-      };
-
+    if (e.response?.status === 401 && session.refresh_token) {
       try {
+        const data = {
+          grant_type: "refresh_token",
+          refresh_token: session.refresh_token,
+          client_id: CLIENT_ID,
+        };
+
         const refresh = await axios.post(tokenEndpoint, stringify(data), {
           headers: { "Content-Type": "application/x-www-form-urlencoded" },
         });
 
         tokenStore.set(sid, { ...session, ...refresh.data });
 
-        const retry = await axios.post(`${SN_INTANCE}/api/now/table/incident`, payload, {
-          headers: { Authorization: `Bearer ${refresh.data.access_token}` },
-        });
+        // Retry deleting incident with new token
+        await axios.delete(
+          `${SN_INTANCE}/api/now/table/incident/${sys_id}`,
+          {
+            headers: { Authorization: `Bearer ${session.access_token}` },
+          }
+        );
 
-        res.json(retry.data);
-        return;
-      } catch (refreshErr) {
-        return res.status(401).send("Session Expired");
+        return res.json({ message: "Incident deleted successfully" });
+      } catch (refreshError) {
+        return res.status(401).json({ message: "Session Expired" });
       }
     }
 
-    console.error(e?.response?.data || e.message || e);
-    res.status(e.response?.status || 500).send("Upstream error");
+    console.error("Error deleting incident:", e.message);
+    return res.status(e.response?.status || 500).json({
+      message: e.response?.data?.error?.message || "Failed to delete incident",
+    });
   }
 });
 
