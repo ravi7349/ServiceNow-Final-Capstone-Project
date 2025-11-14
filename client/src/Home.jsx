@@ -5,10 +5,12 @@ import {
   Card,
   CardContent,
   Grid,
-  Snackbar,
-  Alert,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogContentText,
+  DialogActions,
 } from "@mui/material";
-import { useTheme, alpha } from "@mui/material/styles";
 import { useContext, useEffect, useState } from "react";
 import { AuthContext } from "./AuthProvider";
 import axios from "axios";
@@ -17,160 +19,133 @@ import IncidentForm from "./IncidentForm";
 export default function Home() {
   const { isLogged } = useContext(AuthContext);
   const [incidents, setIncidents] = useState([]);
-  const [editing, setEditing] = useState(null);
-  const theme = useTheme();
-  const cardBg = theme.palette.mode === "dark" ? alpha(theme.palette.primary.main, 0.06) : "#f5f7fb";
-  const [creating, setCreating] = useState(false);
-  const [notif, setNotif] = useState({ open: false, message: "", severity: "info" });
+  const [openCreateForm, setOpenCreateForm] = useState(false);
+  const [openEditForm, setOpenEditForm] = useState(false);
+  const [openDeleteDialog, setOpenDeleteDialog] = useState(false);
+  const [selectedIncident, setSelectedIncident] = useState(null);
+  const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
-    async function fetchData() {
-      if (isLogged) {
+  // Fetch incidents from server
+  const fetchIncidents = async () => {
+    if (isLogged) {
+      try {
         const incidentList = await axios.get(
           "http://localhost:3001/api/incidents",
           { withCredentials: true }
         );
-        setIncidents(incidentList.data.result || []);
+        setIncidents(incidentList.data.result);
+      } catch (error) {
+        console.error("Error fetching incidents:", error);
       }
     }
+  };
 
-    fetchData();
+  useEffect(() => {
+    fetchIncidents();
   }, [isLogged]);
 
-  const handleEdit = (inc) => {
-    setEditing(inc);
-    window.scrollTo({ top: 0, behavior: "smooth" });
+  // Handle Edit Button Click
+  const handleEditClick = (incident) => {
+    setSelectedIncident(incident);
+    setOpenEditForm(true);
   };
 
-  const handleCancel = () => setEditing(null);
-
-  const handleCreateClick = () => {
-    setCreating(true);
-    window.scrollTo({ top: 0, behavior: "smooth" });
+  // Handle Delete Button Click
+  const handleDeleteClick = (incident) => {
+    setSelectedIncident(incident);
+    setOpenDeleteDialog(true);
   };
 
-  const handleCreate = async (payload) => {
+  // Confirm Delete
+  const handleConfirmDelete = async () => {
+    if (!selectedIncident) return;
+
+    setLoading(true);
     try {
-      const resp = await axios.post(`http://localhost:3001/api/incidents`, payload, {
-        withCredentials: true,
-      });
-
-      // ServiceNow returns created record in resp.data.result or resp.data;
-      const newRec = resp.data.result || resp.data;
-      // If SN returns the record inside result, push that; otherwise merge payload
-      const toAdd = newRec && newRec.sys_id ? newRec : { ...payload, number: newRec?.number || "(new)", sys_id: newRec?.sys_id || Date.now().toString() };
-      setIncidents((prev) => [toAdd, ...prev]);
-      setCreating(false);
-      setNotif({ open: true, message: "Incident created successfully", severity: "success" });
-    } catch (e) {
-      console.error('Create failed', e);
-      const errMsg = e.response?.data?.error || e.response?.data || e.message;
-      setNotif({ open: true, message: `Create failed: ${String(errMsg)}`, severity: 'error' });
-    }
-  };
-
-  const handleSave = async (sys_id, payload) => {
-    try {
-      const resp = await axios.put(
-        `http://localhost:3001/api/incidents/${sys_id}`,
-        payload,
+      await axios.delete(
+        `http://localhost:3001/api/incidents/${selectedIncident.sys_id}`,
         { withCredentials: true }
       );
 
-      // resp.data.result or resp.data may vary depending on ServiceNow response
-      // We'll optimistically update the incidents in UI
+      // Remove deleted incident from the list
       setIncidents((prev) =>
-        prev.map((it) => (it.sys_id === sys_id ? { ...it, ...payload } : it))
+        prev.filter((inc) => inc.sys_id !== selectedIncident.sys_id)
       );
-      setEditing(null);
-      setNotif({ open: true, message: "Incident updated successfully", severity: "success" });
-    } catch (e) {
-      console.error("Update failed", e);
-      const errMsg = e.response?.data?.error || e.response?.data || e.message;
-      setNotif({ open: true, message: `Update failed: ${String(errMsg)}`, severity: 'error' });
+
+      setOpenDeleteDialog(false);
+      setSelectedIncident(null);
+    } catch (error) {
+      console.error("Error deleting incident:", error);
+      alert("Failed to delete incident. Please try again.");
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleDelete = async (sys_id) => {
-    if (!confirm('Delete this incident? This cannot be undone.')) return;
-    try {
-      await axios.delete(`http://localhost:3001/api/incidents/${sys_id}`, {
-        withCredentials: true,
-      });
+  // Handle form close
+  const handleCloseEditForm = () => {
+    setOpenEditForm(false);
+    setSelectedIncident(null);
+  };
 
-      // remove from UI
-      setIncidents((prev) => prev.filter((it) => it.sys_id !== sys_id));
-      setNotif({ open: true, message: "Incident deleted", severity: "success" });
-    } catch (e) {
-      console.error('Delete failed', e);
-      const errMsg = e.response?.data?.error || e.response?.data || e.message;
-      setNotif({ open: true, message: `Delete failed: ${String(errMsg)}`, severity: 'error' });
-    }
+  // Handle form submission success
+  const handleFormSuccess = () => {
+    fetchIncidents();
+    handleCloseEditForm();
   };
 
   return (
     <>
       {isLogged && incidents ? (
         <>
-          {/* show form when editing or creating */}
-          <Stack direction="row" justifyContent="space-between" alignItems="center">
-            <Typography variant="h5">Incident Records:</Typography>
-            <Button variant="contained" color="primary" onClick={handleCreateClick}>
-              Create Incident
-            </Button>
-          </Stack>
-
-          {creating && (
-            <IncidentForm
-              incident={null}
-              onCancel={() => setCreating(false)}
-              onCreate={handleCreate}
-            />
-          )}
-
-          {editing && (
-            <IncidentForm
-              incident={editing}
-              onCancel={handleCancel}
-              onSave={handleSave}
-            />
-          )}
-
           <Stack spacing={3}>
+            <Stack direction="row" justifyContent="space-between" alignItems="center">
+              <Typography variant="h5">Incident Records:</Typography>
+              <Button
+                variant="contained"
+                color="primary"
+                onClick={() => setOpenCreateForm(true)}
+              >
+                + Create New Incident
+              </Button>
+            </Stack>
+
             <Grid container spacing={5} justifyContent={"space-around"}>
-              {incidents.map((inc, index) => {
+              {incidents.map((inc) => {
                 return (
                   <Grid key={inc.sys_id}>
-                    <Card sx={{ width: 300, height: 200, bgcolor: cardBg, borderRadius: 2 }}>
+                    <Card sx={{ width: 300, height: 250 }}>
                       <CardContent>
                         <Typography variant="h6">
                           Incident #: {inc.number}
                         </Typography>
-                        <Typography variant="body2">
-                          Description: {inc.short_description}
+                        <Typography variant="body2" sx={{ mt: 1 }}>
+                          <strong>Description:</strong> {inc.short_description}
                         </Typography>
                         <Typography variant="body2">
-                          State: {inc.state}
+                          <strong>State:</strong> {inc.state}
                         </Typography>
                         <Typography variant="body2">
-                          Priority: {inc.priority}
+                          <strong>Priority:</strong> {inc.priority}
                         </Typography>
-                        <Button
-                          sx={{ mt: 1 }}
-                          variant="contained"
-                          color="success"
-                          onClick={() => handleEdit(inc)}
-                        >
-                          Edit
-                        </Button>
-                        <Button
-                          sx={{ mt: 1, mx: 1 }}
-                          variant="contained"
-                          color="error"
-                          onClick={() => handleDelete(inc.sys_id)}
-                        >
-                          Delete
-                        </Button>
+                        <Stack direction="row" spacing={1} sx={{ mt: 2 }}>
+                          <Button
+                            size="small"
+                            variant="contained"
+                            color="primary"
+                            onClick={() => handleEditClick(inc)}
+                          >
+                            Edit
+                          </Button>
+                          <Button
+                            size="small"
+                            variant="contained"
+                            color="error"
+                            onClick={() => handleDeleteClick(inc)}
+                          >
+                            Delete
+                          </Button>
+                        </Stack>
                       </CardContent>
                     </Card>
                   </Grid>
@@ -178,24 +153,71 @@ export default function Home() {
               })}
             </Grid>
           </Stack>
+
+          {/* Create Incident Form Dialog */}
+          <Dialog
+            open={openCreateForm}
+            onClose={() => setOpenCreateForm(false)}
+            fullWidth
+            maxWidth="sm"
+          >
+            <DialogContent>
+              <IncidentForm
+                onClose={() => setOpenCreateForm(false)}
+                onSubmitSuccess={() => {
+                  fetchIncidents();
+                  setOpenCreateForm(false);
+                }}
+              />
+            </DialogContent>
+          </Dialog>
+
+          {/* Edit Incident Form Dialog */}
+          <Dialog
+            open={openEditForm}
+            onClose={handleCloseEditForm}
+            fullWidth
+            maxWidth="sm"
+          >
+            <DialogContent>
+              <IncidentForm
+                incident={selectedIncident}
+                onClose={handleCloseEditForm}
+                onSubmitSuccess={handleFormSuccess}
+              />
+            </DialogContent>
+          </Dialog>
+
+          {/* Delete Confirmation Dialog */}
+          <Dialog open={openDeleteDialog} onClose={() => setOpenDeleteDialog(false)}>
+            <DialogTitle>Delete Incident</DialogTitle>
+            <DialogContent>
+              <DialogContentText>
+                Are you sure you want to delete incident #{selectedIncident?.number}?
+                This action cannot be undone.
+              </DialogContentText>
+            </DialogContent>
+            <DialogActions>
+              <Button
+                onClick={() => setOpenDeleteDialog(false)}
+                disabled={loading}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleConfirmDelete}
+                color="error"
+                variant="contained"
+                disabled={loading}
+              >
+                {loading ? "Deleting..." : "Delete"}
+              </Button>
+            </DialogActions>
+          </Dialog>
         </>
       ) : (
         <Typography>Please log in</Typography>
       )}
-      <Snackbar
-        open={notif.open}
-        autoHideDuration={4000}
-        onClose={() => setNotif((s) => ({ ...s, open: false }))}
-        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
-      >
-        <Alert
-          onClose={() => setNotif((s) => ({ ...s, open: false }))}
-          severity={notif.severity}
-          sx={{ width: "100%" }}
-        >
-          {notif.message}
-        </Alert>
-      </Snackbar>
     </>
   );
 }
